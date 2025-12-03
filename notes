@@ -16,3 +16,9 @@ $bytes = new-object byte[] 2048
 
 # Delete the file
 Remove-Item "vc_pass.txt" -Force
+
+
+# use the password to encrypt ssd
+open veracrypt -> create volume -> encrypt ssd 
+when asked for password: 
+mount usb -> gpg --decrypt X:\vc_pass.txt.gpg -> copy the random password to veracrypt

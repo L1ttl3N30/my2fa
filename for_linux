@@ -1,0 +1,140 @@
+sudo apt install veracrypt gnupg2 xclip
+
+#!/bin/bash
+set -euo pipefail
+
+# Arguments
+VC_EXE="$1"                 # Path to veracrypt binary
+VAULT_PATH="$2"             # Path to Vault.vc
+MOUNT_POINT="$3"            # e.g. /mnt/vault
+ENCRYPTED_PASS_PATH="$4"    # Path to vc_pass.txt.gpg
+GPG_KEYID="$5"              # Your key ID
+
+# Clipboard command depending on display server
+if command -v xclip >/dev/null 2>&1; then
+    CLIP_SET="xclip -selection clipboard"
+    CLIP_CLEAR="printf '' | xclip -selection clipboard"
+elif command -v wl-copy >/dev/null 2>&1; then
+    CLIP_SET="wl-copy"
+    CLIP_CLEAR="printf '' | wl-copy"
+else
+    echo "[ERROR] No clipboard tool found (install xclip or wl-clipboard)"
+    exit 1
+fi
+
+# 1. Mount VeraCrypt vault
+echo "[*] Mounting VeraCrypt vault..."
+sudo "$VC_EXE" --text --mount "$VAULT_PATH" "$MOUNT_POINT"
+
+# 2. Import GPG keys
+echo "[*] Importing GPG keys..."
+gpg --import "$MOUNT_POINT/gpg/private-master.key"
+gpg --import "$MOUNT_POINT/gpg/private-subkeys.key"
+gpg --import-ownertrust "$MOUNT_POINT/gpg/ownertrust.txt"
+
+# 3. Decrypt password to temp file
+TEMPFILE=$(mktemp)
+echo "[*] Decrypting SSD password..."
+gpg --decrypt "$ENCRYPTED_PASS_PATH" > "$TEMPFILE"
+
+# 4. Read into RAM
+PASSWORD=$(cat "$TEMPFILE")
+
+# 5. Copy to clipboard for 10s
+echo -n "$PASSWORD" | $CLIP_SET
+echo "[OK] Password copied to clipboard for 10 seconds."
+sleep 10
+$CLIP_CLEAR
+
+# 6. Securely wipe temp file
+shred -u "$TEMPFILE"
+
+# 7. Wipe RAM variables
+unset PASSWORD
+
+# 8. Delete imported GPG secret keys
+echo "[*] Deleting secret keys from machine..."
+gpg --batch --yes --delete-secret-keys "$GPG_KEYID" || true
+
+# 9. Kill gpg-agent (RAM purge)
+gpgconf --kill gpg-agent
+
+# 10. Dismount VeraCrypt
+echo "[*] Dismounting vault..."
+sudo "$VC_EXE" --text --dismount "$MOUNT_POINT"
+
+echo "[DONE] Clipboard cleared, temp wiped, keys removed, vault dismounted."
+
+
+
+# run it
+./unified_vault_clipboard.sh \
+  /usr/bin/veracrypt \
+  /media/usb/Vault.vc \
+  /mnt/vault \
+  /media/usb/vc_pass.txt.gpg \
+  YOURKEYID
+
+
+
+
+
+
+Encrypt:
+chmod +x setup_vc_password_and_move_keys.sh
+
+#!/bin/bash
+set -euo pipefail
+
+GPG_RECIPIENT="$1"
+USB_PATH="$2"
+MOVE_KEYS="${3:-false}"
+
+if [ ! -d "$USB_PATH" ]; then
+    echo "[ERROR] USB path '$USB_PATH' does not exist."
+    exit 1
+fi
+
+echo "[1] Generating 64-byte random password..."
+gpg --gen-random --armor 2 64 > vc_pass.txt
+
+echo "[2] Encrypting password for $GPG_RECIPIENT..."
+gpg --encrypt --recipient "$GPG_RECIPIENT" vc_pass.txt
+
+echo "[3] Moving encrypted password to USB..."
+mv vc_pass.txt.gpg "$USB_PATH/vc_pass.txt.gpg"
+
+echo "[4] Wiping plaintext password..."
+shred -u vc_pass.txt
+
+echo "[OK] Password created and stored on USB as vc_pass.txt.gpg"
+
+# Optional: move GPG secret keys to USB only
+if [ "$MOVE_KEYS" = "true" ]; then
+    echo ""
+    echo "!!! WARNING !!!"
+    echo "This will move ALL secret keys for $GPG_RECIPIENT to USB and DELETE them locally."
+    read -p "Type 'I UNDERSTAND' to continue: " answer
+    if [ "$answer" != "I UNDERSTAND" ]; then
+        echo "Aborting."
+        exit 0
+    fi
+    
+    echo "[5] Exporting secret keys to USB..."
+    gpg --export-secret-keys "$GPG_RECIPIENT" > "$USB_PATH/gpg_secret_keys.key"
+    gpg --export-secret-subkeys "$GPG_RECIPIENT" > "$USB_PATH/gpg_secret_subkeys.key"
+    gpg --export-ownertrust > "$USB_PATH/ownertrust.txt"
+
+    echo "[6] Deleting local secret keys..."
+    gpg --batch --yes --delete-secret-keys "$GPG_RECIPIENT" || true
+
+    echo "[OK] Secret keys now ONLY on USB."
+else
+    echo "[INFO] Not moving secret keys. Use 'true' as 3rd argument to enable."
+fi
+
+echo "[DONE] Setup complete."
+
+
+run:
+./setup_vc_password_and_move_keys.sh YOURKEYID /media/usb true
