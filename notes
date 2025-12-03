@@ -1,0 +1,18 @@
+1. generate high entropy password with gpg
+gpg --gen-random --armor 2 64 > vc_pass.txt
+
+2. encrypt the password with gpg
+gpg --encrypt --recipient YOURKEYID vc_pass.txt
+
+3. move vc_pass to usb
+move vc_pass.txt.gpg X:\vc_pass.txt.gpg
+
+4. shred plain text password in windows:
+in powershell:
+# Overwrite with random bytes
+$bytes = new-object byte[] 2048
+(new-object Random).NextBytes($bytes)
+[IO.File]::WriteAllBytes("vc_pass.txt", $bytes)
+
+# Delete the file
+Remove-Item "vc_pass.txt" -Force
